@@ -1,4 +1,4 @@
-# pedestrian-count-cleaner
+# Pedestrian Time-Series Count Data Cleaner
 
 Cleaning and imputation of pedestrian count time-series, implementing the method in:
 
