@@ -1,0 +1,5 @@
+numpy>=1.23
+pandas>=1.5
+scikit-learn>=1.1
+statsmodels>=0.13
+# optional: pmdarima  # enables a more thorough automatic SARIMA order search

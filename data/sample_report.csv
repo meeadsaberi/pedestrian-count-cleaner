@@ -1,0 +1,5 @@
+site,sarima_order,n_anomalies,n_linear_imputed,n_sarima_imputed,rebuilt_days,volume_change_pct
+Belmore Rd,"(1, 0, 0)(0, 1, 1)[24]",38,3,63,"2024-03-19, 2024-03-20",40.6
+Concord Rd West,"(0, 0, 0)(0, 1, 1)[24]",8,8,24,,12.2
+Elizabeth St B,"(0, 1, 1)(0, 1, 1)[24]",6,6,25,,22.5
+Middle St A,"(3, 1, 0)(1, 1, 1)[24]",3,3,26,,23.6

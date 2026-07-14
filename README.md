@@ -1,113 +1,98 @@
-# Pedestrian Time-Series Count Data Cleaner
+# pedestrian-count-cleaner
 
-Automated cleaning and imputation of pedestrian count time-series.
+Cleaning and imputation of pedestrian count time-series, implementing the method in:
 
-This tool reproduces the methodology in:
-
-> Shen, Y., Wijayaratna, K., & Saberi, M. (2025). *Time-Series Approaches for Cleaning
-> and Imputing Pedestrian Count Data: Implications for Urban Street Classification in
+> Shen, Y., Wijayaratna, K., & Saberi, M. *Time-Series Approaches for Cleaning and
+> Imputing Pedestrian Count Data: Implications for Urban Street Classification in
 > Sydney.* Transportation Research Record.
 
-Pedestrian counters (passive infrared, video, etc.) routinely produce erroneous data
-from occlusion, tampering, malfunction, and installation/removal mid-day. This package
-takes raw count series and returns a cleaned, gap-free series by combining seasonal-trend
-decomposition, Isolation-Forest anomaly detection, and SARIMA/linear imputation. See
-[`METHODOLOGY.md`](METHODOLOGY.md) for the full method.
+Give it raw hourly counts and it returns a cleaned, gap-free series per site.
 
----
+## Method
 
-## Installation
+For each site the pipeline:
 
-```bash
+1. Aggregates to an hourly grid and keeps weekdays only (consecutive weekdays are
+   treated as continuous, so the weekend gap is never modelled).
+2. Runs a robust STL decomposition so anomalies do not distort the daily profile.
+3. Flags anomalous hours with an Isolation Forest on the residuals.
+4. Classifies each day: a *whole-day* anomaly (daily total a strong outlier versus
+   the site's median day) is discarded and rebuilt; *isolated* hourly anomalies are
+   repaired in place.
+5. Imputes: isolated hours by linear interpolation; whole days and deployment-edge
+   gaps by SARIMA (Kalman smoother for interior gaps; forward forecast for the
+   trailing edge; a time-reversed forecast for the leading edge).
+
+## Install
+
+```
 pip install -r requirements.txt
 ```
 
-Requires Python 3.9+, `numpy`, `pandas`, `scikit-learn`, `statsmodels` (and `matplotlib`
-for plots). `pmdarima` is optional and, if installed, is used for more thorough automatic
-SARIMA order selection.
+Requires numpy, pandas, scikit-learn and statsmodels. `pmdarima` is optional
+(enables a more thorough order search via `use_pmdarima=True`).
 
-## Input format
-
-A CSV with **one datetime column** and **one numeric column per sensor/site**:
-
-| Time                | Belmore Rd | Concord Rd West | Middle St A |
-|---------------------|-----------:|----------------:|------------:|
-| 2024-03-15 00:00:00 | 0          | ...             | ...         |
-| 2024-03-15 01:00:00 | 2          | ...             | ...         |
-
-Sub-hourly data (e.g. 15-minute) is aggregated to hourly automatically. Missing
-timestamps and gaps are allowed. A comma inside a column name will break CSV parsing —
-quote such headers.
-
-## Quick start
+## Usage
 
 Command line:
 
-```bash
-python pedestrian_cleaner.py counts.csv -o counts_cleaned.csv --report report.csv --plots plots/
+```
+python pedestrian_cleaner.py data/sample_input.csv -o cleaned.csv --report report.csv
 ```
 
-Python API:
+Python:
 
 ```python
 import pandas as pd
 from pedestrian_cleaner import clean_dataframe, CleanConfig
 
-df = pd.read_csv("counts.csv", parse_dates=["Time"])
-cleaned, report = clean_dataframe(df, time_col="Time", config=CleanConfig())
-cleaned.to_csv("counts_cleaned.csv")
-print(report)
+df = pd.read_csv("data/sample_input.csv")
+cleaned, report = clean_dataframe(df, time_col="timestamp", config=CleanConfig())
+cleaned.to_csv("cleaned.csv")
 ```
 
-`report` summarises, per site: the SARIMA order used, number of anomalies, hours imputed
-by linear interpolation vs SARIMA, which days were rebuilt whole, and the resulting
+## Input / output format
+
+**Input** (`data/sample_input.csv`): a datetime column plus one numeric column per
+site holding the hourly count. Missing timestamps and gaps are allowed.
+
+```
+timestamp,Belmore Rd,Concord Rd West,Elizabeth St B,Middle St A
+2024-03-15 00:00:00,2.0,,,
+2024-03-15 01:00:00,0.0,,,
+```
+
+**Output** (`data/sample_output.csv`): the same columns on a regular weekday hourly
+grid, fully imputed. The `report` also lists, per site, the SARIMA order used, the
+number of anomalies, hours imputed by linear vs SARIMA, days rebuilt, and the
 percentage change in mean daily volume.
 
-## Key options (`CleanConfig`)
+## Reproducing the paper
 
-| Option | Default | Meaning |
+`example_usage.py` cleans the four sample sites using the per-site contamination and
+SARIMA order from the paper (`data/paper_params.csv`, i.e. Table 1) and reproduces
+the Table 3 volume changes:
+
+```
+python example_usage.py
+```
+
+| Site | Volume change | Hours imputed (linear + SARIMA) |
 |---|---|---|
-| `period` | `24` | Seasonal period (hours). 24 = daily cycle on hourly data. |
-| `weekdays_only` | `True` | Drop weekends before processing (recommended for sparse weekend coverage). |
-| `contamination` | `0.05` | Expected fraction of anomalous hours (Isolation Forest). Tune within `0.02–0.17`. |
-| `day_low`, `day_high` | `0.40`, `2.5` | A day is rebuilt whole if its total is `< day_low×median` or `> day_high×median`. |
-| `hourly_backstop` | `8` | ...or if it carries at least this many hourly anomalies. |
-| `sarima_order` | `None` | Fix `((p,d,q),(P,D,Q))` for all sites, or leave `None` to auto-select per site. |
-| `enforce_stationarity` / `enforce_invertibility` | `True` | Keep SARIMA reconstructions stable. |
-| `clip_factor` | `1.5` | Reconstructed values clipped to `[0, clip_factor × observed max]`. |
+| Belmore Rd | +40.6% | 3 + 63 |
+| Concord Rd West | +12.2% | 8 + 24 |
+| Elizabeth St B | +22.5% | 6 + 25 |
+| Middle St A | +23.6% | 3 + 26 |
 
-### CLI flags
+## Parameters
 
-```
-python pedestrian_cleaner.py INPUT.csv
-    -o, --output        output CSV (default cleaned.csv)
-    --time-col          name of the datetime column (auto-detected if omitted)
-    --report            write the per-site report CSV
-    --plots             directory for raw-vs-cleaned overlay PNGs
-    --contamination     Isolation Forest contamination (default 0.05)
-    --period            seasonal period in hours (default 24)
-    --keep-weekends     process all days instead of weekdays only
-    --order p,d,q,P,D,Q fix one SARIMA order for all sites (else auto)
-```
-
-## Output
-
-- **Cleaned CSV** — the datetime index plus one fully-imputed column per site.
-- **Report CSV** — per-site diagnostics.
-- **Plots** (optional) — for each site, an overlay of raw (green), cleaned (orange),
-  detected anomalies (red), with weekends shaded.
-
-## Notes & tips
-
-- **Contamination** is the main tuning knob. Higher values flag more hourly outliers.
-  In the source study it was set per site within `0.02–0.17`; start at `0.05` and adjust
-  by inspecting the overlay plots.
-- **Short deployments** (a few days) and **very low-volume sites** (a few pedestrians per
-  hour) are intrinsically hard: SARIMA has little history to learn from and percentage
-  errors explode near zero. Treat their output with caution.
-- **Reproducibility.** Isolation-Forest results depend on `random_state`; set it for
-  deterministic runs.
+Key `CleanConfig` fields: `contamination` (Isolation Forest outlier fraction,
+0.02–0.17 per site in the paper), `day_low` / `day_high` (whole-day rebuild
+thresholds, 0.40 / 2.5), and `sarima_order` (fixed order, or `None` for automatic
+selection). Very short or sparse deployments are sensitive to these settings;
+supplying a per-site `contamination` and `sarima_order` (as in `example_usage.py`)
+gives the most reliable reconstruction.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see [LICENSE](LICENSE).
